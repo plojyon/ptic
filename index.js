@@ -1,19 +1,20 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = (...args) => import('node-fetch').then(mod => mod.default(...args));
-
+const mqtt = require("mqtt");
 const { Partials } = require('discord.js');
 
 require('dotenv').config();
+
+const waypoints = {};
+const inregions = {};
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {
     console.error('Missing TOKEN in .env file');
     process.exit(1);
 }
-const PREFIX = process.env.PREFIX + " ";
-const SYSTEM_MSG = process.env.SYSTEM_MSG || "";
 
-const client = new Client({
+const discord_client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
@@ -23,85 +24,151 @@ const client = new Client({
     partials: [Partials.Channel],
 });
 
+// stupid fucking formula
+function haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // meters
+    const toRad = x => x * Math.PI / 180;
 
-let NONCE = 'invalid_nonce';
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
 
-async function refreshNonce() {
-    try {
-        const cheerio = await import('cheerio');
-        const res = await fetch('https://povejmo.si/klepet/');
-        const html = await res.text();
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) ** 2;
 
-        const $ = cheerio.load(html);
-        const nonce = $('input[name="_wpnonce"]').val();
-
-        if (nonce) {
-            if (nonce !== NONCE) {
-                NONCE = nonce;
-                console.log(`[Nonce Updated] New NONCE: ${NONCE}`);
-            }
-        } else {
-            console.warn('[Nonce Error] Could not find nonce in page.');
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+function discord_send(content) {
+    discord_client.channels.fetch(process.env.DISCORD_CHANNEL_ID)
+        .then(channel => {
+            channel.send(content);
         }
-    } catch (err) {
-        console.error('[Nonce Fetch Error]', err);
-    }
+        )
+        .catch(console.error);
 }
 
-// refresh nonce every 10 minutes
-setInterval(refreshNonce, 10 * 60 * 1000);
-refreshNonce(); // immediate call at startup
 
-
-client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}`);
+discord_client.on('clientReady', () => {
+    console.log(`Logged in as ${discord_client.user.tag}`);
+    discord_send("Pls upload waypoints");
 });
 
-client.on('messageCreate', async message => {
+discord_client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    const isDM = message.channel.type === 1 || message.guild === null;
-    const isPrefixed = message.content.startsWith(PREFIX);
+    const isPrefixed = /\/\w/.test(message.content);
 
-    if (!isDM && !isPrefixed) return;
-
-    await message.channel.sendTyping();
-
-    const messages = [];
-    if (SYSTEM_MSG.length > 0) {
-        messages.push({ role: 'user', content: SYSTEM_MSG });
-        messages.push({ role: 'assistant', content: "V redu, bom upošteval tvoje navodilo." });
-    }
-    const content = isPrefixed ? message.content.slice(PREFIX.length).trim() : message.content.trim();
-    messages.push({ role: 'user', content: content });
-
-    const payload = new URLSearchParams();
-    payload.append('_ajax_nonce', NONCE);
-    payload.append('action', 'get_response');
-    payload.append('messages', JSON.stringify(messages));
+    if (!isPrefixed) return;
+    const [topic, ...payloadParts] = message.content.split(' ');
 
     try {
-        const res = await fetch('https://povejmo.si/api/gams/v1/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-            body: payload.toString()
-        });
-
-        const json = await res.json();
-        if (json.success && json.data && json.data.content) {
-            if (json.data.content.length > 2000) {
-                return message.channel.send("Sori, sm zaceu ful razmisljat in je Discord reku da rabim nitro.");
-            } else {
-                message.channel.send(json.data.content);
-            }
-        } else {
-            message.channel.send('API je mrtev kot dodo.');
-        }
-    } catch (err) {
-        console.error(err);
-        message.channel.send('Napaka pri pošiljanju zahteve.');
+        mqtt_client.publish(topic.slice(1), payloadParts.join(' '));
+    }
+    catch (e) {
+        message.reply('No.');
+        console.error('Error publishing MQTT message:', e);
     }
 });
 
+discord_client.login(TOKEN);
 
-client.login(TOKEN);
+
+const MQTT_ADDRESS = process.env.MQTT_ADDRESS;
+const mqtt_client = mqtt.connect(MQTT_ADDRESS, {
+    username: process.env.MQTT_USERNAME,
+    password: process.env.MQTT_PASSWORD
+}).on('connect', () => {
+    console.log('MQTT connected');
+
+    // System waypoint events ("owntracks/+/+/event") are useless to us, because
+    // we want to track all waypoints for all users.
+    subscriptions = ["owntracks/+/+/waypoints", "owntracks/+/+"];
+    for (const sub of subscriptions) {
+        mqtt_client.subscribe(sub, (err) => {
+            if (err) {
+                console.error('Subscribe error:', err);
+            } else {
+                console.log(`Subscribed to ${sub}`);
+            }
+        });
+    }
+});
+
+mqtt_client.on('message', (topic, message) => {
+    const payload = message.toString();
+    let data;
+    let user;
+    try {
+        data = JSON.parse(payload);
+        user = topic.split('/')[1];
+    }
+    catch (e) {
+        console.error('Error parsing waypoints JSON:', e);
+        return;
+    }
+
+    console.log(`Received message on topic ${topic}`);
+
+    try {
+        if (topic.endsWith('/waypoints')) {
+            // find which waypoints were added and which were removed
+            const new_waypoints = data.waypoints.map(wp => wp.desc);
+            const old_waypoints = waypoints[user] ? waypoints[user].map(wp => wp.desc) : [];
+            
+            const added = new_waypoints.filter(x => !old_waypoints.includes(x));
+            const removed = old_waypoints.filter(x => !new_waypoints.includes(x));
+
+            changes = "";
+            if (added.length !== 0)
+                changes += `+${added.join('\n+')}`;
+            if (removed.length !== 0)
+                changes += `-${removed.join('\n-')}`;
+            if (changes !== "")
+                discord_send(`${user} updated waypoints:\n${changes}`);
+
+            waypoints[user] = data.waypoints;
+            inregions[user] = undefined;
+        }
+        // Useless system waypoint events
+        // else if (topic.endsWith('/event')) {
+        //     if (data._type !== 'transition') return;
+        //     event_desc = data.event === 'enter' ? 'arrived at' : 'left';
+
+        //     discord_send(`${data.tid} ${event_desc} ${data.desc}`);
+        // }
+        else {
+            const prev_regions = inregions[user]; // may be undefined!
+            const new_regions = [];
+
+            // check all waypoints of all users
+            for (const [u, wps] of Object.entries(waypoints)) {
+                for (const wp of wps) {
+                    const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
+                    console.log(`Distance from ${user} to waypoint ${wp.desc} of ${u}: ${distance} (radius: ${wp.rad})`);
+                    if (distance < wp.rad) {
+                        new_regions.push(wp.desc);
+                    }
+                }
+            }
+
+            if (prev_regions !== undefined) {
+                const arrived = new_regions.filter(x => !prev_regions || !prev_regions.includes(x));
+                const departed = (prev_regions || []).filter(x => !new_regions.includes(x));
+
+                for (const region of arrived) {
+                    discord_send(`${user} arrived at ${region}`);
+                }
+                for (const region of departed) {
+                    discord_send(`${user} left ${region}`);
+                }
+            }
+
+            inregions[user] = new_regions;
+        }
+    }
+    catch (e) {
+        console.error('Error handling MQTT message:', e);
+    }
+});
+

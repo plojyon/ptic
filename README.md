@@ -1,17 +1,12 @@
-# Povedko
+# Komarček
 
-Discord bot, povezan s [povejmo.si](https://povejmo.si/klepet/).
+Discord bot, povezan z MQTT.
 
 .env
 ```
 TOKEN=your_discord_api_token
-PREFIX=!povejmi
-SYSTEM_MSG=Odgovarjaj samo s slovenskimi pregovori.
+MQTT_ADDRESS=mqtts://mqtt.example.com:8883
+MQTT_USERNAME=your_mqtt_username
+MQTT_PASSWORD=your_mqtt_password
 ```
-
-## Primeri uporabe
-![Demo image 1](./demo1.png)
-![Demo image 2](./demo2.png)
-![Demo image 3](./demo3.png)
-![Demo image 4](./demo4.png)
 

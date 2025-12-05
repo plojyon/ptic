@@ -125,7 +125,7 @@ mqtt_client.on('message', (topic, message) => {
 				const wp = waypoints[user].find(wp => wp.desc === x);
 				return `\\- **${wp.desc}** (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
 			});
-			const modified = same_waypoints.map(x => {
+			const modified = same_waypoints.map(wp_desc => {
 				// compare lat,lon,rad
 				const new_wp = data.waypoints.find(wp => wp.desc === wp_desc);
 				const old_wp = waypoints[user].find(wp => wp.desc === wp_desc);

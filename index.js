@@ -66,7 +66,7 @@ function ago(d) {
 	return result;
 }
 function linkto(lat, lon) {
-	return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}`;
+	return `<https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}>`;
 }
 
 discord_client.on('clientReady', () => {

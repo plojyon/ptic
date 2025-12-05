@@ -117,18 +117,22 @@ mqtt_client.on('message', (topic, message) => {
 			const old_waypoints = waypoints[user] ? waypoints[user].map(wp => wp.desc) : [];
 			const same_waypoints = new_waypoints.filter(x => old_waypoints.includes(x));
 	
-			const added = new_waypoints.filter(x => !old_waypoints.includes(x));
-			const removed = old_waypoints.filter(x => !new_waypoints.includes(x));
-			
-			const modified = [];
-			for (const wp_desc of same_waypoints) {
+			const added = new_waypoints.filter(x => !old_waypoints.includes(x)).map(x => {
+				const wp = data.waypoints.find(wp => wp.desc === x);
+				return `${wp.desc} (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
+			});
+			const removed = old_waypoints.filter(x => !new_waypoints.includes(x)).map(x => {
+				const wp = waypoints[user].find(wp => wp.desc === x);
+				return `${wp.desc} (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
+			});
+			const modified = same_waypoints.map(x =>
 				// compare lat,lon,rad
 				const new_wp = data.waypoints.find(wp => wp.desc === wp_desc);
 				const old_wp = waypoints[user].find(wp => wp.desc === wp_desc);
 				if (new_wp.lat !== old_wp.lat || new_wp.lon !== old_wp.lon || new_wp.rad !== old_wp.rad) {
-					modified.push((wp_desc, `(${old_wp.lat}, ${old_wp.lon}, ${old_wp.rad}m) -> (${new_wp.lat}, ${new_wp.lon}, ${new_wp.rad}m)`));
+					return `${wp_desc} (${old_wp.lat}, ${old_wp.lon}, ${old_wp.rad}m) -> (${new_wp.lat}, ${new_wp.lon}, ${new_wp.rad}m)`;
 				}
-			}
+			}).filter(x => x !== undefined);
 
 			changes = "";
 			if (added.length !== 0)
@@ -136,7 +140,7 @@ mqtt_client.on('message', (topic, message) => {
 			if (removed.length !== 0)
 				changes += `-${removed.join('\n-')}\n`;
 			if (modified.length !== 0)
-				changes += `~${modified.map(m => m[0] + ` (${m[1]})`).join('\n~')}\n`;
+				changes += `~${modified.join('\n~')}\n`;
 			if (changes !== "")
 				discord_send(`${user} updated waypoints:\n${changes.trim()}`);
 			else

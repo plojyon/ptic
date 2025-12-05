@@ -170,7 +170,12 @@ mqtt_client.on('message', (topic, message) => {
 			if (prev_regions !== undefined) {
 				const arrived = new_regions.filter(x => !prev_regions || !prev_regions.includes(x));
 				const departed = (prev_regions || []).filter(x => !new_regions.includes(x));
-				const loc = `bro is @ (${data.lat}, ${data.lon})+-${data.acc}`;
+
+				const distances_to_waypoints = waypoints[user].map(wp => {
+					const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
+					return `${wp.desc}: ${Math.round(distance)}m\n`;
+				});
+				const loc = `bro is @ (${data.lat}, ${data.lon}) +-${data.acc}m\n${distances_to_waypoints}`.trim();
 				for (const region of arrived) {
 					discord_send(`${user} arrived at ${region}\n${loc}`);
 				}

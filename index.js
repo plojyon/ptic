@@ -155,12 +155,12 @@ mqtt_client.on('message', (topic, message) => {
             if (prev_regions !== undefined) {
                 const arrived = new_regions.filter(x => !prev_regions || !prev_regions.includes(x));
                 const departed = (prev_regions || []).filter(x => !new_regions.includes(x));
-
+				const loc = `bro is @ (${data.lat}, ${data.lon})+-${data.acc}`;
                 for (const region of arrived) {
-                    discord_send(`${user} arrived at ${region}`);
+                    discord_send(`${user} arrived at ${region}\n${loc}`);
                 }
                 for (const region of departed) {
-                    discord_send(`${user} left ${region}`);
+                    discord_send(`${user} left ${region}\n${loc}`);
                 }
             }
 

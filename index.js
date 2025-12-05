@@ -7,6 +7,8 @@ require('dotenv').config();
 
 const waypoints = {};
 const inregions = {};
+const last_seen = {};
+const last_transition = {};
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {
@@ -47,7 +49,25 @@ function discord_send(content) {
 		)
 		.catch(console.error);
 }
+function ago(d) {
+	const s = Math.floor((Date.now() - d.getTime()) / 1000);
+	if (s > 86400) return ">24h ago";
 
+	const h = Math.floor(s / 3600);
+	const m = Math.floor((s % 3600) / 60);
+	const sec = s % 60;
+
+	let result = "";
+	if (h > 0) result += `${h}h `;
+	if (m > 0) result += `${m}m `;
+	if (s > 0) result += `${sec}s `;
+	if (result === "") result = "just now";
+	else result = result + "ago";
+	return result;
+}
+function linkto(lat, lon) {
+	return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}`;
+}
 
 discord_client.on('clientReady', () => {
 	console.log(`Logged in as ${discord_client.user.tag}`);
@@ -57,18 +77,34 @@ discord_client.on('clientReady', () => {
 discord_client.on('messageCreate', async message => {
 	if (message.author.bot) return;
 
-	const isPrefixed = /\/\w/.test(message.content);
+	const query = str.match(/^where\s+(\w+)$/i)?.[1];
+	if (!query) return;
 
-	if (!isPrefixed) return;
-	const [topic, ...payloadParts] = message.content.split(' ');
+	if (!last_seen[query]) {
+		discord_send(`${query} who?`);
+		return;
+	}
 
-	try {
-		mqtt_client.publish(topic.slice(1), payloadParts.join(' '));
+	const loc = last_seen[query].where;
+	const locstr = `[(${loc.lat}, ${loc.lon}) +-${loc.acc}m](${linkto(loc.lat, loc.lon)})`;
+	const timestr = ago(last_seen[query].when);
+	// left FRI 3s ago / arrived at HOME 5m ago / no waypoint activity yet
+	let last_transition_str = "no waypoint activity yet";
+	if (last_transition[query]) {
+		if (last_transition[query].enter) {
+			last_transition_str = `arrived at`;
+		} else {
+			last_transition_str = `left`;
+		}
+		const wp = waypoints[query]?.find(wp => wp.desc === last_transition[query].name);
+		const wp_link = linkto(wp.lat, wp.lon);
+		last_transition_str += ` [${last_transition[query].name}](${wp_link})`;
+
+		const when_str = ago(new Date(last_transition[query].when));
+		last_transition_str += ` ${when_str}`;
 	}
-	catch (e) {
-		message.reply('No.');
-		console.error('Error publishing MQTT message:', e);
-	}
+	const wpstr = waypoints[query] ? `${waypoints[query].length} waypoints` : "no waypoints";
+	discord_send(`${query} reported ${timestr} at ${locstr} (${last_transition_str}).`);
 });
 
 discord_client.login(TOKEN);
@@ -116,21 +152,21 @@ mqtt_client.on('message', (topic, message) => {
 			const new_waypoints = data.waypoints.map(wp => wp.desc);
 			const old_waypoints = waypoints[user] ? waypoints[user].map(wp => wp.desc) : [];
 			const same_waypoints = new_waypoints.filter(x => old_waypoints.includes(x));
-	
+
 			const added = new_waypoints.filter(x => !old_waypoints.includes(x)).map(x => {
 				const wp = data.waypoints.find(wp => wp.desc === x);
-				return `\\+ **${wp.desc}** (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
+				return `\\+ **${wp.desc}** [(${wp.lat}, ${wp.lon}, +-${wp.rad}m)](${linkto(wp.lat, wp.lon)})`;
 			});
 			const removed = old_waypoints.filter(x => !new_waypoints.includes(x)).map(x => {
 				const wp = waypoints[user].find(wp => wp.desc === x);
-				return `\\- **${wp.desc}** (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
+				return `\\- **${wp.desc}** [(${wp.lat}, ${wp.lon}, +-${wp.rad}m)](${linkto(wp.lat, wp.lon)})`;
 			});
 			const modified = same_waypoints.map(wp_desc => {
 				// compare lat,lon,rad
 				const new_wp = data.waypoints.find(wp => wp.desc === wp_desc);
 				const old_wp = waypoints[user].find(wp => wp.desc === wp_desc);
 				if (new_wp.lat !== old_wp.lat || new_wp.lon !== old_wp.lon || new_wp.rad !== old_wp.rad) {
-					return `\\~ **${wp_desc}** (${old_wp.lat}, ${old_wp.lon}, ${old_wp.rad}m) -> (${new_wp.lat}, ${new_wp.lon}, ${new_wp.rad}m)`;
+					return `\\~ **${wp_desc}** [(${old_wp.lat}, ${old_wp.lon}, +-${old_wp.rad}m)](${linkto(old_wp.lat, old_wp.lon)}) -> [(${new_wp.lat}, ${new_wp.lon}, +-${new_wp.rad}m)](${linkto(new_wp.lat, new_wp.lon)})`;
 				}
 			}).filter(x => x !== undefined);
 
@@ -159,6 +195,7 @@ mqtt_client.on('message', (topic, message) => {
 		else {
 			const prev_regions = inregions[user]; // may be undefined!
 			const new_regions = [];
+			last_seen[user] = { when: Date.now(), where: data };
 
 			// check all waypoints of all users
 			for (const [u, wps] of Object.entries(waypoints)) {
@@ -183,15 +220,16 @@ mqtt_client.on('message', (topic, message) => {
 						return `* ${wp.desc}: ${d_str}`;
 					})
 					.join('\n');
-				const loc = `bro is @ (${data.lat}, ${data.lon}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`;
+				const loc = `bro is @ [(${data.lat}, ${data.lon})](${linkto(data.lat, data.lon)}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`;
 				for (const region of arrived) {
 					discord_send(`${user} arrived at ${region}\n${loc}`);
+					last_transition[user] = {"name": region, "enter": true, "when": Date.now()};
 				}
 				for (const region of departed) {
 					discord_send(`${user} left ${region}\n${loc}`);
+					last_transition[user] = {"name": region, "enter": false, "when": Date.now()};
 				}
 			}
-
 			inregions[user] = new_regions;
 		}
 	}

@@ -69,7 +69,7 @@ function linkto(lat, lon) {
 	return `<https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}>`;
 }
 function all_waypoints() {
-	return waypoints = Object.keys(waypoints).reduce((acc, user) => acc.concat(waypoints[user]), [])
+	return Object.keys(waypoints).reduce((acc, user) => acc.concat(waypoints[user]), [])
 }
 function get_wp(name) {
 	return all_waypoints().find(wp => wp.desc === name);

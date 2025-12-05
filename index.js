@@ -119,28 +119,28 @@ mqtt_client.on('message', (topic, message) => {
 	
 			const added = new_waypoints.filter(x => !old_waypoints.includes(x)).map(x => {
 				const wp = data.waypoints.find(wp => wp.desc === x);
-				return `${wp.desc} (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
+				return `\\+ **${wp.desc}** (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
 			});
 			const removed = old_waypoints.filter(x => !new_waypoints.includes(x)).map(x => {
 				const wp = waypoints[user].find(wp => wp.desc === x);
-				return `${wp.desc} (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
+				return `\\- **${wp.desc}** (${wp.lat}, ${wp.lon}, ${wp.rad}m)`;
 			});
 			const modified = same_waypoints.map(x => {
 				// compare lat,lon,rad
 				const new_wp = data.waypoints.find(wp => wp.desc === wp_desc);
 				const old_wp = waypoints[user].find(wp => wp.desc === wp_desc);
 				if (new_wp.lat !== old_wp.lat || new_wp.lon !== old_wp.lon || new_wp.rad !== old_wp.rad) {
-					return `${wp_desc} (${old_wp.lat}, ${old_wp.lon}, ${old_wp.rad}m) -> (${new_wp.lat}, ${new_wp.lon}, ${new_wp.rad}m)`;
+					return `\\~ **${wp_desc}** (${old_wp.lat}, ${old_wp.lon}, ${old_wp.rad}m) -> (${new_wp.lat}, ${new_wp.lon}, ${new_wp.rad}m)`;
 				}
 			}).filter(x => x !== undefined);
 
 			changes = "";
 			if (added.length !== 0)
-				changes += `+${added.join('\n+')}\n`;
+				changes += `${added.join('\n')}\n`;
 			if (removed.length !== 0)
-				changes += `-${removed.join('\n-')}\n`;
+				changes += `${removed.join('\n')}\n`;
 			if (modified.length !== 0)
-				changes += `~${modified.join('\n~')}\n`;
+				changes += `${modified.join('\n')}\n`;
 			if (changes !== "")
 				discord_send(`${user} updated waypoints:\n${changes.trim()}`);
 			else
@@ -179,9 +179,9 @@ mqtt_client.on('message', (topic, message) => {
 					.reduce((acc, user) => acc.concat(waypoints[user]), [])
 					.map(wp => {
 						const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
-						return `${wp.desc}: ${Math.round(distance)}m\n`;
+						return `* ${wp.desc}: ${Math.round(distance)}m\n`;
 					});
-				const loc = `bro is @ (${data.lat}, ${data.lon}) +-${data.acc}m\n${distances_to_waypoints}`.trim();
+				const loc = `bro is @ (${data.lat}, ${data.lon}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`.trim();
 				for (const region of arrived) {
 					discord_send(`${user} arrived at ${region}\n${loc}`);
 				}

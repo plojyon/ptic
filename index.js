@@ -212,21 +212,22 @@ mqtt_client.on('message', (topic, message) => {
 				const arrived = new_regions.filter(x => !prev_regions || !prev_regions.includes(x));
 				const departed = (prev_regions || []).filter(x => !new_regions.includes(x));
 
-				const distances_to_waypoints = Object.keys(waypoints)
-					.reduce((acc, user) => acc.concat(waypoints[user]), [])
-					.map(wp => {
-						const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
-						const d_str = distance > 1000 ? (distance / 1000).toFixed(2) + 'km' : Math.round(distance) + 'm';
-						return `* ${wp.desc}: ${d_str}`;
-					})
-					.join('\n');
-				const loc = `bro is @ [(${data.lat}, ${data.lon})](${linkto(data.lat, data.lon)}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`;
+				// DEBUG location string
+				//const distances_to_waypoints = Object.keys(waypoints)
+				//	.reduce((acc, user) => acc.concat(waypoints[user]), [])
+				//	.map(wp => {
+				//		const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
+				//		const d_str = distance > 1000 ? (distance / 1000).toFixed(2) + 'km' : Math.round(distance) + 'm';
+				//		return `* ${wp.desc}: ${d_str}`;
+				//	})
+				//	.join('\n');
+				//const loc = `bro is @ [(${data.lat}, ${data.lon})](${linkto(data.lat, data.lon)}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`;
 				for (const region of arrived) {
-					discord_send(`${user} arrived at ${region}\n${loc}`);
+					discord_send(`${user} arrived at ${region}`);
 					last_transition[user] = {"name": region, "enter": true, "when": Date.now()};
 				}
 				for (const region of departed) {
-					discord_send(`${user} left ${region}\n${loc}`);
+					discord_send(`${user} left ${region}`);
 					last_transition[user] = {"name": region, "enter": false, "when": Date.now()};
 				}
 			}

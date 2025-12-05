@@ -179,9 +179,11 @@ mqtt_client.on('message', (topic, message) => {
 					.reduce((acc, user) => acc.concat(waypoints[user]), [])
 					.map(wp => {
 						const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
-						return `* ${wp.desc}: ${Math.round(distance)}m\n`;
-					});
-				const loc = `bro is @ (${data.lat}, ${data.lon}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`.trim();
+						const d_str = distance > 1000 ? (distance / 1000).toFixed(2) + 'km' : Math.round(distance) + 'm';
+						return `* ${wp.desc}: ${d_str}`;
+					})
+					.join('\n');
+				const loc = `bro is @ (${data.lat}, ${data.lon}) +-${data.acc}m. Distances:\n${distances_to_waypoints}`;
 				for (const region of arrived) {
 					discord_send(`${user} arrived at ${region}\n${loc}`);
 				}

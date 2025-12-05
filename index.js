@@ -68,6 +68,12 @@ function ago(d) {
 function linkto(lat, lon) {
 	return `<https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}>`;
 }
+function all_waypoints() {
+	return waypoints = Object.keys(waypoints).reduce((acc, user) => acc.concat(waypoints[user]), [])
+}
+function get_wp(name) {
+	return all_waypoints().find(wp => wp.desc === name);
+}
 
 discord_client.on('clientReady', () => {
 	console.log(`Logged in as ${discord_client.user.tag}`);
@@ -96,15 +102,14 @@ discord_client.on('messageCreate', async message => {
 		} else {
 			last_transition_str = `left`;
 		}
-		const wp = waypoints[query]?.find(wp => wp.desc === last_transition[query].name);
+		const wp = get_wp(last_transition[query].name);
 		const wp_link = linkto(wp.lat, wp.lon);
 		last_transition_str += ` [${last_transition[query].name}](${wp_link})`;
 
 		const when_str = ago(last_transition[query].when);
 		last_transition_str += ` ${when_str}`;
 	}
-	const wpstr = waypoints[query] ? `${waypoints[query].length} waypoints` : "no waypoints";
-	discord_send(`${query} reported ${timestr} at ${locstr} (${last_transition_str}).`);
+	discord_send(`${query} was at ${locstr} ${timestr} (${last_transition_str}).`);
 });
 
 discord_client.login(TOKEN);

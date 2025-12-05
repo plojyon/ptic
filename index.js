@@ -115,17 +115,32 @@ mqtt_client.on('message', (topic, message) => {
             // find which waypoints were added and which were removed
             const new_waypoints = data.waypoints.map(wp => wp.desc);
             const old_waypoints = waypoints[user] ? waypoints[user].map(wp => wp.desc) : [];
-            
+			const same_waypoints = new_waypoints.filter(x => old_waypoints.includes(x));
+	
             const added = new_waypoints.filter(x => !old_waypoints.includes(x));
             const removed = old_waypoints.filter(x => !new_waypoints.includes(x));
+			
+			const modified = [];
+			for (const wp_desc of same_waypoints) {
+				// compare lat,lon,rad
+				const new_wp = data.waypoints.find(wp => wp.desc === wp_desc);
+				const old_wp = waypoints[user].find(wp => wp.desc === wp_desc);
+				if (new_wp.lat !== old_wp.lat || new_wp.lon !== old_wp.lon || new_wp.rad !== old_wp.rad) {
+					modified.push((wp_desc, `(${old_wp.lat}, ${old_wp.lon}, ${old_wp.rad}m) -> (${new_wp.lat}, ${new_wp.lon}, ${new_wp.rad}m)`));
+				}
+			}
 
             changes = "";
             if (added.length !== 0)
-                changes += `+${added.join('\n+')}`;
+                changes += `+${added.join('\n+')}\n`;
             if (removed.length !== 0)
-                changes += `-${removed.join('\n-')}`;
+                changes += `-${removed.join('\n-')}\n`;
+			if (modified.length !== 0)
+				changes += `~${modified.map(m => m[0] + ` (${m[1]})`).join('\n~')}\n`;
             if (changes !== "")
-                discord_send(`${user} updated waypoints:\n${changes}`);
+                discord_send(`${user} updated waypoints:\n${changes.trim()}`);
+			else
+				discord_send(`Stupid ${user} re-uploaded waypoints with NO changes. What a waste of bandwidth!`);
 
             waypoints[user] = data.waypoints;
             inregions[user] = undefined;

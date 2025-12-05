@@ -50,7 +50,7 @@ function discord_send(content) {
 		.catch(console.error);
 }
 function ago(d) {
-	const s = Math.floor((Date.now() - d.getTime()) / 1000);
+	const s = Math.floor((Date.now() - (new Date(d)).getTime()) / 1000);
 	if (s > 86400) return ">24h ago";
 
 	const h = Math.floor(s / 3600);
@@ -100,7 +100,7 @@ discord_client.on('messageCreate', async message => {
 		const wp_link = linkto(wp.lat, wp.lon);
 		last_transition_str += ` [${last_transition[query].name}](${wp_link})`;
 
-		const when_str = ago(new Date(last_transition[query].when));
+		const when_str = ago(last_transition[query].when);
 		last_transition_str += ` ${when_str}`;
 	}
 	const wpstr = waypoints[query] ? `${waypoints[query].length} waypoints` : "no waypoints";

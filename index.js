@@ -77,7 +77,7 @@ discord_client.on('clientReady', () => {
 discord_client.on('messageCreate', async message => {
 	if (message.author.bot) return;
 
-	const query = str.match(/^where\s+(\w+)$/i)?.[1];
+	const query = message.content.match(/^where\s+(\w+)$/i)?.[1];
 	if (!query) return;
 
 	if (!last_seen[query]) {

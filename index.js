@@ -198,6 +198,10 @@ mqtt_client.on('message', (topic, message) => {
 		//	 discord_send(`${data.tid} ${event_desc} ${data.desc}`);
 		// }
 		else {
+			if (!data.lon || !data.lat || !data.acc) {
+				console.error('User is in void.', user, data);
+				return;
+			}
 			const prev_regions = inregions[user]; // may be undefined!
 			const new_regions = [];
 			last_seen[user] = { when: Date.now(), where: data };

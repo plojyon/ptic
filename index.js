@@ -75,6 +75,12 @@ function get_wp(name) {
 	return all_waypoints().find(wp => wp.desc === name);
 }
 
+function notquiteiso(d) {
+	// yyyy-mm-ddThh:mm:ss
+	const quiteiso = d.toISOString();
+	return quiteiso.split('.')[0];
+}
+
 discord_client.on('clientReady', () => {
 	console.log(`Logged in as ${discord_client.user.tag}`);
 	discord_send("Pls upload waypoints");
@@ -83,7 +89,12 @@ discord_client.on('clientReady', () => {
 discord_client.on('messageCreate', async message => {
 	if (message.author.bot) return;
 
-	const query = message.content.match(/^where\s+(\w+)$/i)?.[1];
+	const re = message.content.match(/^where\s+(?<who>\w+)(?:\s(?<when>\w+))?$/i);
+	const query = re?.groups?.who;
+	const timespan = re?.groups?.when;
+	console.log(`Received query: ${query}, timespan: ${timespan}`);
+	console.log('re:', re);
+
 	if (!query) return;
 
 	if (!last_seen[query]) {
@@ -91,25 +102,62 @@ discord_client.on('messageCreate', async message => {
 		return;
 	}
 
-	const loc = last_seen[query].where;
-	const locstr = `[(${loc.lat}, ${loc.lon}) +-${loc.acc}m](${linkto(loc.lat, loc.lon)})`;
-	const timestr = ago(last_seen[query].when);
-	// left FRI 3s ago / arrived at HOME 5m ago / no waypoint activity yet
-	let last_transition_str = "no waypoint activity yet";
-	if (last_transition[query]) {
-		if (last_transition[query].enter) {
-			last_transition_str = `arrived at`;
-		} else {
-			last_transition_str = `left`;
-		}
-		const wp = get_wp(last_transition[query].name);
-		const wp_link = linkto(wp.lat, wp.lon);
-		last_transition_str += ` [${last_transition[query].name}](${wp_link})`;
+	if (!timespan) {
+		const loc = last_seen[query].where;
+		const locstr = `[(${loc.lat}, ${loc.lon}) +-${loc.acc}m](${linkto(loc.lat, loc.lon)})`;
+		const timestr = ago(last_seen[query].when);
+		// left FRI 3s ago / arrived at HOME 5m ago / no waypoint activity yet
+		let last_transition_str = "no waypoint activity yet";
+		if (last_transition[query]) {
+			if (last_transition[query].enter) {
+				last_transition_str = `arrived at`;
+			} else {
+				last_transition_str = `left`;
+			}
+			const wp = get_wp(last_transition[query].name);
+			const wp_link = linkto(wp.lat, wp.lon);
+			last_transition_str += ` [${last_transition[query].name}](${wp_link})`;
 
-		const when_str = ago(last_transition[query].when);
-		last_transition_str += ` ${when_str}`;
+			const when_str = ago(last_transition[query].when);
+			last_transition_str += ` ${when_str}`;
+		}
+		discord_send(`${query} was at ${locstr} ${timestr} (${last_transition_str}).`);
 	}
-	discord_send(`${query} was at ${locstr} ${timestr} (${last_transition_str}).`);
+	else {
+		const now = Date.now();
+		const timespan_re = timespan.match(/^(\d+)([mhd])$/) || timespan.match(/^(today|yesterday)$/i);
+		if (!timespan_re) {
+			discord_send(`Invalid timespan format. Supports: "today", "yesterday", or an integer followed by "m", "h", or "d".`);
+			return;
+		}
+
+		const params = new URLSearchParams();
+		params.set('user', query);
+		if (timespan_re[2]) {
+			const amount = parseInt(timespan_re[1]);
+			const unit = timespan_re[2];
+			let start;
+			if (unit === 'm') start = new Date(now - amount * 60 * 1000);
+			else if (unit === 'h') start = new Date(now - amount * 3600 * 1000);
+			else if (unit === 'd') start = new Date(now - amount * 24 * 3600 * 1000);
+			params.set('start', notquiteiso(start));
+			params.set('end', notquiteiso(new Date()));
+		} else {
+			const day = timespan_re[1].toLowerCase();
+			let start = new Date();
+			let end = new Date();
+			start.setHours(0, 0, 0, 0);
+			end.setHours(23, 59, 59, 999);
+			if (day === 'yesterday') {
+				start.setDate(start.getDate() - 1);
+				end.setDate(end.getDate() - 1);
+			}
+			params.set('start', notquiteiso(start));
+			params.set('end', notquiteiso(end));
+		}
+		const url = `${process.env.OWNTRACKS_URL}?${params.toString()}`;
+		discord_send(`${query} be like: ${url}`);
+	}
 });
 
 discord_client.login(TOKEN);

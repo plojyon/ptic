@@ -94,32 +94,28 @@ function notquiteiso(d) {
 }
 
 function format_human_seconds (input_time_seconds) {
-    function numberEnding (number) {
-        return (number > 1) ? 's' : '';
-    }
-
     var temp = Math.floor(input_time_seconds);
     var years = Math.floor(temp / 31536000);
 	let out = "";
     if (years) {
-        out += ' ' + years + ' year' + numberEnding(years);
+        out += ' ' + years + 'y';
     }
     //TODO: Months! Maybe weeks? 
     var days = Math.floor((temp %= 31536000) / 86400);
     if (days) {
-        out += ' ' + days + ' day' + numberEnding(days);
+        out += ' ' + days + 'd';
     }
     var hours = Math.floor((temp %= 86400) / 3600);
     if (hours) {
-        out += ' ' + hours + ' hour' + numberEnding(hours);
+        out += ' ' + hours + 'h';
     }
     var minutes = Math.floor((temp %= 3600) / 60);
     if (minutes) {
-        out += ' ' + minutes + ' minute' + numberEnding(minutes);
+        out += ' ' + minutes + 'min';
     }
     var seconds = temp % 60;
     if (seconds) {
-        out += ' ' + seconds + ' second' + numberEnding(seconds);
+        out += ' ' + seconds + 's';
     }
 	if (out.length == 0) {
 		return 'less than a second'; //'just now' //or other string you like;
@@ -130,62 +126,19 @@ function format_human_seconds (input_time_seconds) {
 
 
 const get_regions = (data) => {
-	const new_regions = [];
+	const new_regions = new Set();
 	// check all waypoints of all users
 	for (const [u, wps] of Object.entries(waypoints)) {
 		for (const wp of wps) {
 			const distance = haversineMeters(data.lat, data.lon, wp.lat, wp.lon);
-			console.log(distance, wp.desc)
+			//console.log(distance, wp.desc)
 			if (distance < wp.rad) {
-				new_regions.push(wp);
+				new_regions.add(wp.desc);
 			}
 		}
 	}
 
-	return new_regions
-}
-
-function to_local_meters(lat, lon, originLat, originLon) {
-    const R = 6371000;
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const x = toRad(lon - originLon) * Math.cos(toRad(originLat)) * R;
-    const y = toRad(lat - originLat) * R;
-    return { x, y };
-}
-
-// ---- Find fraction t in [0,1] along segment (p0 -> p1) where it crosses
-// ---- the circle centered at wp with radius wp.rad (meters). Returns null
-// ---- if there's no crossing in that range (shouldn't happen if callers
-// ---- only call this when inside/outside status differs between p0 and p1).
-function get_crossing_fraction(p0, p1, wp) {
-    const a = to_local_meters(p0.lat, p0.lon, wp.lat, wp.lon);
-    const b = to_local_meters(p1.lat, p1.lon, wp.lat, wp.lon);
- 
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
- 
-    // Solve |a + t*(b-a)|^2 = r^2  =>  quadratic in t
-    const A = dx * dx + dy * dy;
-    const B = 2 * (a.x * dx + a.y * dy);
-    const C = a.x * a.x + a.y * a.y - wp.rad * wp.rad;
- 
-    if (A === 0) return null; // p0 === p1, no meaningful line
- 
-    const disc = B * B - 4 * A * C;
-    if (disc < 0) return null; // line doesn't intersect circle at all
- 
-    const sqrtDisc = Math.sqrt(disc);
-    const t1 = (-B - sqrtDisc) / (2 * A);
-    const t2 = (-B + sqrtDisc) / (2 * A);
- 
-    // We expect exactly one root in [0,1] when one endpoint is inside and
-    // the other outside. Collect valid roots and return the one in range.
-    const candidates = [t1, t2].filter((t) => t >= 0 && t <= 1);
-    if (candidates.length === 0) return null;
- 
-    // If both are in range (segment clips the circle twice), pick the first
-    // crossing — the relevant one for splitting time at a boundary transition.
-    return Math.min(...candidates);
+	return [...new_regions]
 }
 
 const get_time_spent_histogram = (points) => {
@@ -194,7 +147,7 @@ const get_time_spent_histogram = (points) => {
     let prev_point;
  
     const addTime = (desc, seconds) => {
-		console.log("add time", desc, seconds)
+		//console.log("add time", desc, seconds)
         if (seconds <= 0) return;
         histogram[desc] = (histogram[desc] || 0) + seconds;
     };
@@ -212,61 +165,51 @@ const get_time_spent_histogram = (points) => {
                 continue;
             }
  
-            const prevDescs = (prev_regions || []).map((r) => r.desc);
-            const currDescs = regions.map((r) => r.desc);
- 
-            const arrived = regions.filter((r) => !prevDescs.includes(r.desc));
-            const departed = (prev_regions || []).filter((r) => !currDescs.includes(r.desc));
-            const stayed = regions.filter((r) => prevDescs.includes(r.desc));
+            const departed = (prev_regions || []).filter((r) => !regions.includes(r));
+            const stayed = regions.filter((r) => prev_regions.includes(r));
 
-			console.log(arrived, departed, stayed);
- 
             // Stayed in this region the whole interval -> full delta
-            for (const wp of stayed) {
-                addTime(wp.desc, deltaSeconds);
-            }
- 
-            // Departed a region partway through -> credit time up to the crossing
-            for (const wp of departed) {
-                const t = get_crossing_fraction(prev_point, current, wp);
-                const seconds = t === null ? deltaSeconds : deltaSeconds * t;
-                addTime(wp.desc, seconds);
-            }
- 
-            // Arrived at a region partway through -> credit time after the crossing
-            for (const wp of arrived) {
-                const t = get_crossing_fraction(prev_point, current, wp);
-                const seconds = t === null ? 0 : deltaSeconds * (1 - t);
-                addTime(wp.desc, seconds);
-            }
- 
-            // Neither point matched any region -> "unknown"
-            if (stayed.length === 0 && arrived.length === 0 && departed.length === 0) {
-                addTime("unknown", deltaSeconds);
+            for (const wp of [...stayed, ...departed]) {
+                addTime(wp, deltaSeconds);
             }
         }
  
         prev_point = current;
         prev_regions = regions;
     }
+
+	const totalSpan = points.length > 1
+    ? points.at(-1).tst - points[0].tst
+    : 0;
+
+	const histogramTotal = Object.values(histogram)
+		.reduce((sum, seconds) => sum + seconds, 0);
+
+	console.log("POINT COUNT:", points.length);
+	console.log("FIRST TST:", points[0]?.tst);
+	console.log("LAST TST:", points.at(-1)?.tst);
+	console.log("TOTAL SPAN:", format_human_seconds(totalSpan));
+	console.log("HISTOGRAM:", histogram);
+	console.log("HISTOGRAM TOTAL:", format_human_seconds(histogramTotal));
  
     return histogram;
 }
 
-const fetch_owntracks_devices = (user) =>  {
+const fetch_owntracks_devices = (user) =>  
 	new Promise((res, rej) => fetch(`${process.env.OWNTRACKS_API_URL}/list?user=${user}`, {
 		"headers": {
 			"authorization": `Basic ${btoa(OWNTRACKS_PASS)}`,
 		},
 	}).then(x => x.json()).then(x => res(x.results)))
-}
 
-const fetch_owntracks_locations = (url) => 
-	new Promise((res, rej) => fetch(url, {
+const fetch_owntracks_locations = (url) => {
+	console.log(url);
+
+	return new Promise((res, rej) => fetch(url, {
 		"headers": {
 			"authorization": `Basic ${btoa(OWNTRACKS_PASS)}`,
 		},
-	}).then(x => x.json()).then(x => res(x)))
+	}).then(x => x.json()).then(x => res(x)))}
 
 
 discord_client.on('clientReady', () => {
@@ -352,17 +295,23 @@ discord_client.on('messageCreate', async message => {
 		
 		if(histwaypoint) {
 			if (histwaypoint == 'all') {
-				fetch_owntracks_devices(quert).then(devices => {
+				fetch_owntracks_devices(query).then(devices => {
 					params.set('user', query)
 					params.set('device', devices[0])
+
+					// stupid parameter rewrite
+					params.set('from', params.get('start'))
+					params.set('to', params.get('end'))
+					params.delete('start')
+					params.delete('end')
+
 					const url = `${process.env.OWNTRACKS_API_URL}/locations?${params.toString()}`;
 					return fetch_owntracks_locations(url).then(loc => {
-						const report = `\n -`.join(Object.entries(
-							get_time_spent_histogram(loc.data)).map(
-								(waypoint, time) => 
+						const report = Object.entries(
+							get_time_spent_histogram(loc.data.sort((a,b) => a.tst - b.tst))).map(
+								([waypoint, time]) => 
 									`${waypoint}: **${format_human_seconds(time)}**`
-							)
-						)
+							).join(`\n -`)
 						discord_send(`${query} be like:\n -${report}`)
 					})
 				}).catch(console.error)

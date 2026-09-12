@@ -3,6 +3,7 @@
 Discord bot, povezan z MQTT.
 
 .env
+
 ```
 TOKEN=your_discord_api_token
 MQTT_ADDRESS=mqtts://mqtt.example.com:8883
@@ -11,5 +12,5 @@ MQTT_PASSWORD=your_mqtt_password
 DISCORD_CHANNEL_ID=1234567890123456789
 OWNTRACKS_URL=https://user:basicauth@owntracks.example.com
 OWNTRACKS_PASS=user:basicauth
-OWNTRACKS_LOCATION_API_URL=https://owntracks.example.com/owntracks/api/0/locations
+OWNTRACKS_API_URL=https://owntracks.example.com/owntracks/api/0
 ```

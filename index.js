@@ -253,6 +253,14 @@ const get_time_spent_histogram = (points) => {
     return histogram;
 }
 
+const fetch_owntracks_devices = (user) =>  {
+	new Promise((res, rej) => fetch(`${process.env.OWNTRACKS_API_URL}/list?user=${user}`, {
+		"headers": {
+			"authorization": `Basic ${btoa(OWNTRACKS_PASS)}`,
+		},
+	}).then(x => x.json()).then(x => res(x.results)))
+}
+
 const fetch_owntracks_locations = (url) => 
 	new Promise((res, rej) => fetch(url, {
 		"headers": {
@@ -344,16 +352,20 @@ discord_client.on('messageCreate', async message => {
 		
 		if(histwaypoint) {
 			if (histwaypoint == 'all') {
-				const url = `${process.env.OWNTRACKS_LOCATION_API_URL}?${params.toString()}`;
-				fetch_owntracks_locations(url).then(loc => {
-					const report = `\n -`.join(Object.entries(
-						get_time_spent_histogram(loc.data)).map(
-							(waypoint, time) => 
-								`${waypoint}: **${format_human_seconds(time)}**`
+				fetch_owntracks_devices(quert).then(devices => {
+					params.set('user', query)
+					params.set('device', devices[0])
+					const url = `${process.env.OWNTRACKS_API_URL}/locations?${params.toString()}`;
+					return fetch_owntracks_locations(url).then(loc => {
+						const report = `\n -`.join(Object.entries(
+							get_time_spent_histogram(loc.data)).map(
+								(waypoint, time) => 
+									`${waypoint}: **${format_human_seconds(time)}**`
+							)
 						)
-					)
-					discord_send(`${query} be like:\n -${report}`)
-				})
+						discord_send(`${query} be like:\n -${report}`)
+					})
+				}).catch(console.error)
 			} else {
 				discord_send('<histwaypoint> should be all, others are not supported yet');	
 			}

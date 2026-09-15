@@ -311,6 +311,47 @@ async function parse_location(location_str, follow_redirect=true) {
 	throw new Error(`Could not find coordinates in ${location_str}`);
 }
 
+const parse_time = (time_str, invert=false) => {
+	const re_units = [...time_str.matchAll(/(?:(?<amount>\d+) ?(?<unit>min|[mhd']) ?)+/g)];
+	const re_words = time_str.match(/^(today|yesterday|tomorrow)$/i);
+
+	const now = Date.now();
+
+	if (time_str === "now") return [new Date(), new Date()];
+
+	if (re_units.length) {
+		let delta = 0;
+		for (match of re_units) {
+			const amount = parseFloat(match.groups.amount);
+			const unit = match.groups.unit;
+			if (unit === 'm' || unit === 'min' || unit === "'") delta += amount * 60 * 1000;
+			else if (unit === 'h') delta += amount * 3600 * 1000;
+			else if (unit === 'd') delta += amount * 24 * 3600 * 1000;
+		}
+
+		if (invert) return [new Date(), new Date(now + delta)];
+		return [new Date(now - delta), new Date()];
+	}
+	if (re_words) {
+		let start = new Date();
+		let end = new Date();
+
+		const day = re_words[1].toLowerCase();
+		start.setHours(0, 0, 0, 0);
+		end.setHours(23, 59, 59, 999);
+		if (day === 'yesterday') {
+			start.setDate(start.getDate() - 1);
+			end.setDate(end.getDate() - 1);
+		}
+		if (day === 'tomorrow') {
+			start.setDate(start.getDate() + 1);
+			end.setDate(end.getDate() + 1);
+		}
+		return [start, end];
+	}
+
+	throw new Error(`Invalid time format. Supports: "today", "yesterday", "tomorrow", or an integer followed by "m", "h", or "d".`);
+}
 const parse_timespan = (timespan_str) => {
 	if (timespan_str == null) {
 		// check for null or undefined
@@ -318,31 +359,15 @@ const parse_timespan = (timespan_str) => {
 		return undefined;
 	}
 
-	const now = Date.now();
-	let start = new Date();
-	let end = new Date();
-
-	const timespan_re = timespan_str.match(/^(\d+)([mhd']|min)$/) || timespan_str.match(/^(today|yesterday)$/i);
-	if (!timespan_re) {
-		throw new Error(`Invalid timespan format. Supports: "today", "yesterday", or an integer followed by "m", "h", or "d".`);
+	const re_interval = timespan_str.match(/\[(.+), ?(.+)\]/);
+	if (re_interval != null) {
+		start = parse_time(re_interval[1])[0];
+		end = parse_time(re_interval[2], true)[1];
+		return [start, end];
 	}
-
-	if (timespan_re[2]) {
-		const amount = parseInt(timespan_re[1]);
-		const unit = timespan_re[2];
-		if (unit === 'm' || unit === 'min' || unit === "'") start = new Date(now - amount * 60 * 1000);
-		else if (unit === 'h') start = new Date(now - amount * 3600 * 1000);
-		else if (unit === 'd') start = new Date(now - amount * 24 * 3600 * 1000);
-	} else {
-		const day = timespan_re[1].toLowerCase();
-		start.setHours(0, 0, 0, 0);
-		end.setHours(23, 59, 59, 999);
-		if (day === 'yesterday') {
-			start.setDate(start.getDate() - 1);
-			end.setDate(end.getDate() - 1);
-		}
+	else {
+		return parse_time(timespan_str);;
 	}
-	return [start, end];
 }
 
 const where = (user, timespan, callback) => {
@@ -456,7 +481,7 @@ discord_client.on('messageCreate', async message => {
 		}
 
 	} else if (message.content.toLowerCase().startsWith('where ')) {
-		const re = message.content.match(/^where\s+(?<who>\w+)(?:\s(?<when>[\w']+))?$/i);
+		const re = message.content.match(/^where\s+(?<who>\w+)(?:\s(?<when>[\w']+|\[[\w'\-@:]+, ?[\w'\-@:]+\]))?$/i);
 		if (re == null) return;
 		const query = re?.groups?.who;
 		const timespan = re?.groups?.when;
@@ -469,7 +494,7 @@ discord_client.on('messageCreate', async message => {
 		}
 
 	} else if (message.content.toLowerCase().startsWith('hist ')) {
-		const re = message.content.match(/^hist\s+(?<who>\w+)(?:\s(?<when>\w+))?$/i);
+		const re = message.content.match(/^hist\s+(?<who>\w+)(?:\s(?<when>[\w']+|\[[\w'\-@:]+, ?[\w'\-@:]+\]))?$/i);
 		if (re == null) return;
 		const user = re?.groups?.who;
 		const timespan = re?.groups?.when || "today";

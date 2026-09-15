@@ -4,6 +4,7 @@ const mqtt = require("mqtt");
 const { Partials } = require('discord.js');
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 const ChartDataLabels = require('chartjs-plugin-datalabels');
+const OpenLocationCode = require("open-location-code");
 
 require('dotenv').config();
 
@@ -20,6 +21,8 @@ const waypoints = w;
 const inregions = {};
 const last_seen = {};
 const last_transition = {};
+const TEMP_WAYPOINT_USER = 'temp';
+waypoints[TEMP_WAYPOINT_USER] = [];
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {
@@ -268,167 +271,214 @@ discord_client.on('clientReady', () => {
 	discord_send(`Reincarnated. Loaded ${waypoints.system.length} system waypoints.`);
 });
 
-async function getLatLon(shortUrl) {
-	const response = await fetch(shortUrl, {
-		redirect: "follow"
-	});
+async function parse_location(location_str, follow_redirect=true) {
+	const re_coords1 = location_str.match(/(?<lat>-?\d{1,3}\.\d{4,7}), ?(?<lon>-?\d{1,3}\.\d{4,7})/);
+	const re_coords2 = location_str.match(/(?<latdeg>\d\d?)°(?<latmin>\d\d?)['′](?<latsec>\d+(?:\.\d+)?)["″](?<northsouth>[NS]) (?<londeg>\d\d?)°(?<lonmin>\d\d?)['′](?<lonsec>\d+(?:\.\d+)?)["″](?<eastwest>[EW])/i);
+	const re_plus = location_str.match(/(?<pluscode>[23456789CFGHJMPQRVWX]+\+[23456789CFGHJMPQRVWX]+)/i);
 
-	const finalUrl = response.url;
-
-	const match = finalUrl.match(
-		/\/search\/(-?\d+(?:\.\d+)?),\+?(-?\d+(?:\.\d+)?)/
-	);
-
-
-	if (!match) {
-		throw new Error(`Could not find coordinates in: ${finalUrl}`);
+	let lat;
+	let lon;
+	if (re_coords1 != null) {
+		console.log("matched re_coords1", re_coords1);
+		lat = parseFloat(re_coords1.groups.lat);
+		lon = parseFloat(re_coords1.groups.lon);
+		return {lat, lon};
+	}
+	if (re_coords2 != null) {
+		console.log("matched re_coords2", re_coords2);
+		const g = re_coords2.groups;
+		lat = (parseFloat(g.latdeg) + parseFloat(g.latmin) / 60 + parseFloat(g.latsec) / 3600) * (g.northsouth.toUpperCase() === "N" ? 1 : -1);
+		lon = (parseFloat(g.londeg) + parseFloat(g.lonmin) / 60 + parseFloat(g.lonsec) / 3600) * (g.eastwest.toUpperCase() === "E" ? 1 : -1);
+		return {lat, lon};
+	}
+	if (re_plus != null) {
+		console.log("matched re_plus", re_plus);
+		const pluscode = re_plus.groups.pluscode.toUpperCase();
+		const olc = new OpenLocationCode.OpenLocationCode();
+		const full = olc.recoverNearest(pluscode, 46.05, 14.51);
+		//const area = olc.decode(pluscode);
+		const area = olc.decode(full);
+		lat = area.latitudeCenter;
+		lon = area.longitudeCenter;
+		return {lat, lon};
+	}
+	if (follow_redirect && location_str.startsWith("http")) {
+		const response = await fetch(location_str, {redirect: "follow"});
+		console.log("following redirect from", location_str, "to", response.url);
+		return parse_location(response.url, follow_redirect=false);
 	}
 
-	return {
-		lat: match[1],
-		lon: match[2]
-	};
+	throw new Error(`Could not find coordinates in ${location_str}`);
 }
-const TEMP_WAYPOINT_USER = 'system';
+
+const parse_timespan = (timespan_str) => {
+	if (timespan_str == null) {
+		// check for null or undefined
+		// https://stackoverflow.com/a/21273362
+		return undefined;
+	}
+
+	const now = Date.now();
+	let start = new Date();
+	let end = new Date();
+
+	const timespan_re = timespan_str.match(/^(\d+)([mhd']|min)$/) || timespan_str.match(/^(today|yesterday)$/i);
+	if (!timespan_re) {
+		throw new Error(`Invalid timespan format. Supports: "today", "yesterday", or an integer followed by "m", "h", or "d".`);
+	}
+
+	if (timespan_re[2]) {
+		const amount = parseInt(timespan_re[1]);
+		const unit = timespan_re[2];
+		if (unit === 'm' || unit === 'min' || unit === "'") start = new Date(now - amount * 60 * 1000);
+		else if (unit === 'h') start = new Date(now - amount * 3600 * 1000);
+		else if (unit === 'd') start = new Date(now - amount * 24 * 3600 * 1000);
+	} else {
+		const day = timespan_re[1].toLowerCase();
+		start.setHours(0, 0, 0, 0);
+		end.setHours(23, 59, 59, 999);
+		if (day === 'yesterday') {
+			start.setDate(start.getDate() - 1);
+			end.setDate(end.getDate() - 1);
+		}
+	}
+	return [start, end];
+}
+
+const where = (user, timespan, callback) => {
+	if (last_seen[user] == null) {
+		callback(`${user} who?`);
+		return;
+	}
+
+	if (timespan == null) {
+		const loc = last_seen[user].where;
+		const locstr = `[(${loc.lat}, ${loc.lon}) +-${loc.acc}m](${linkto(loc.lat, loc.lon)})`;
+		const timestr = ago(last_seen[user].when);
+		// left FRI 3s ago / arrived at HOME 5m ago / no waypoint activity yet
+		let last_transition_str = "no waypoint activity yet";
+		if (last_transition[user]) {
+			if (last_transition[user].enter) {
+				last_transition_str = `arrived at`;
+			} else {
+				last_transition_str = `left`;
+			}
+			const wp = get_wp(last_transition[user].name);
+			const wp_link = linkto(wp.lat, wp.lon);
+			last_transition_str += ` [${last_transition[user].name}](${wp_link})`;
+
+			const when_str = ago(last_transition[user].when);
+			last_transition_str += ` ${when_str}`;
+		}
+		callback(`${user} was at ${locstr} ${timestr} (${last_transition_str}).`);
+	}
+	else {
+		const params = new URLSearchParams();
+		params.set('user', user);
+		params.set('start', notquiteiso(timespan[0]));
+		params.set('end', notquiteiso(timespan[1]));
+		const url = `${FRONTEND_URL}?${params.toString()}`;
+		callback(`${user} be like: ${url}`);
+	}
+}
+
+const hist = (user, timespan, callback) => {
+	fetch_devices(user).then(devices => {
+		const params = new URLSearchParams();
+		params.set('user', user)
+		params.set('device', devices[0])
+		params.set('from', notquiteiso(timespan[0]))
+		params.set('to', notquiteiso(timespan[1]))
+
+		const url = `${API_URL}/locations?${params.toString()}`;
+		return fetch_locations(url).then(loc => {
+			const histogram = get_time_spent_histogram(loc.data.sort((a,b) => a.tst - b.tst));
+			const report = Object.entries(histogram).map(
+				([waypoint, time]) => `- ${waypoint}: **${format_human_seconds(time)}**`
+			).join(`\n`);
+			console.log(histogram);
+
+			if (report == null) {
+				callback("John Cena moment");
+			} else {
+				pie(histogram).then(img => {
+					files = [{
+						attachment: img,
+						name: "histogram.png",
+					}]
+					callback(`${user} been hanging around:\n${report}`, files);
+				});
+			}
+		})
+	}).catch(console.error)
+}
+
+const notify = async (author, target, location_str, range, name, callback) => {
+	let waypoint_obj = {
+		"desc": name,
+		"temp": true,
+		"tag_discord_user_id": author,
+		"rad": range,
+		"target_filter": [target],
+	};
+
+	if (waypoints[TEMP_WAYPOINT_USER].filter(x => x.desc == waypoint_obj.desc)?.length != 0) {
+		return callback(`waypoint with desc ${waypoint_obj.desc} already exists`);
+	}
+	const location = await parse_location(location_str);
+	waypoint_obj = {...waypoint_obj, ...location};
+
+	// memory safe :)
+	if (waypoints[TEMP_WAYPOINT_USER].filter(x => x.desc == waypoint_obj.desc)?.length != 0) {
+		return callback(`waypoint with desc ${waypoint_obj.desc} already exists`);
+	}
+	waypoints[TEMP_WAYPOINT_USER].push(waypoint_obj);
+	const location_url = linkto(location.lat, location.lon);
+	return callback(`Ok, I will shit on your head when ${target} enters [the location](${location_url}).`);
+}
 
 discord_client.on('messageCreate', async message => {
 	if (message.author.bot) return;
 
-	if(message.content.startsWith('notify')) {
-		const re_notify = message.content.match(/^notify\s+(?<who>\w+)(?:\s(?<where>[^\s]+))(?:\s(?<range>[^\s]+))?(?:\s(?<name>.+))?$/i);
-		const target = re_notify?.groups?.who;
-		const temp_waypoint = re_notify?.groups?.where;
-		const range = re_notify?.groups?.range || '100';
-
-		let waypoint_obj = {}
-		waypoint_obj.desc = re_notify?.groups?.name || `Temp waypoint ${Math.random()}`;
-
-		if (waypoints[TEMP_WAYPOINT_USER].filter(x => x.desc == waypoint_obj.desc)?.length != 0) {
-			discord_send(`waypoint with desc ${waypoint_obj.desc} already exists`);
+	if (message.content.toLowerCase().startsWith('notify ')) {
+		const re = message.content.match(/^notify\s+(?<who>\w+)(?:\s(?<range>\d+)m)?(?:\s(?<where>.+))$/i);
+		if (re == null) return;
+		const target = re?.groups?.who;
+		const location_str = re?.groups?.where;
+		const range = re?.groups?.range || '100';
+		const name = `${location_str} +-${range}`;
+		try {
+			await notify(message.author.id, target, location_str, range, name, discord_send);
+		}
+		catch (e) {
+			discord_send(e.message);
 			return;
 		}
 
-		waypoint_obj = {...waypoint_obj, ...(await getLatLon(temp_waypoint))};
-		waypoint_obj.tag_discord_user_id = message.author.id;
-		waypoint_obj.temp = true;
-		waypoint_obj.rad = range;
-		waypoint_obj.target_filter = [target];
-
-		// memory safe :)
-		if (waypoints[TEMP_WAYPOINT_USER].filter(x => x.desc == waypoint_obj.desc)?.length != 0) {
-			discord_send(`waypoint with desc ${waypoint_obj.desc} already exists`);
-			return;
-		}
-
-		waypoints[TEMP_WAYPOINT_USER].push(waypoint_obj);
-		
-		discord_send(`Ok, will notify when ${target} enters the location.\n${JSON.stringify(waypoint_obj, undefined, 4)}`);
-
-	} else if(message.content.startsWith('where')) {
-		const re = message.content.match(/^where\s+(?<who>\w+)(?:\s(?<when>\w+))?(?:\s(?<histwaypoint>\w+))?$/i);
+	} else if (message.content.toLowerCase().startsWith('where ')) {
+		const re = message.content.match(/^where\s+(?<who>\w+)(?:\s(?<when>[\w']+))?$/i);
+		if (re == null) return;
 		const query = re?.groups?.who;
 		const timespan = re?.groups?.when;
-		const histwaypoint = re?.groups?.histwaypoint;
-		console.log(`Received query: ${query}, timespan: ${timespan}`);
-		console.log('re:', re);
-	
-		if (!query) return;
-	
-		if (!last_seen[query]) {
-			discord_send(`${query} who?`);
+		try {
+			where(query, parse_timespan(timespan), discord_send);
+		}
+		catch (e) {
+			discord_send(e.message);
 			return;
 		}
-	
-		if (!timespan) {
-			const loc = last_seen[query].where;
-			const locstr = `[(${loc.lat}, ${loc.lon}) +-${loc.acc}m](${linkto(loc.lat, loc.lon)})`;
-			const timestr = ago(last_seen[query].when);
-			// left FRI 3s ago / arrived at HOME 5m ago / no waypoint activity yet
-			let last_transition_str = "no waypoint activity yet";
-			if (last_transition[query]) {
-				if (last_transition[query].enter) {
-					last_transition_str = `arrived at`;
-				} else {
-					last_transition_str = `left`;
-				}
-				const wp = get_wp(last_transition[query].name);
-				const wp_link = linkto(wp.lat, wp.lon);
-				last_transition_str += ` [${last_transition[query].name}](${wp_link})`;
-	
-				const when_str = ago(last_transition[query].when);
-				last_transition_str += ` ${when_str}`;
-			}
-			discord_send(`${query} was at ${locstr} ${timestr} (${last_transition_str}).`);
+
+	} else if (message.content.toLowerCase().startsWith('hist ')) {
+		const re = message.content.match(/^hist\s+(?<who>\w+)(?:\s(?<when>\w+))?$/i);
+		if (re == null) return;
+		const user = re?.groups?.who;
+		const timespan = re?.groups?.when || "today";
+		try {
+			hist(user, parse_timespan(timespan), discord_send);
 		}
-		else {
-			const now = Date.now();
-			const timespan_re = timespan.match(/^(\d+)([mhd])$/) || timespan.match(/^(today|yesterday)$/i);
-			if (!timespan_re) {
-				discord_send(`Invalid timespan format. Supports: "today", "yesterday", or an integer followed by "m", "h", or "d".`);
-				return;
-			}
-	
-			const params = new URLSearchParams();
-			params.set('user', query);
-			if (timespan_re[2]) {
-				const amount = parseInt(timespan_re[1]);
-				const unit = timespan_re[2];
-				let start;
-				if (unit === 'm') start = new Date(now - amount * 60 * 1000);
-				else if (unit === 'h') start = new Date(now - amount * 3600 * 1000);
-				else if (unit === 'd') start = new Date(now - amount * 24 * 3600 * 1000);
-				params.set('start', notquiteiso(start));
-				params.set('end', notquiteiso(new Date()));
-			} else {
-				const day = timespan_re[1].toLowerCase();
-				let start = new Date();
-				let end = new Date();
-				start.setHours(0, 0, 0, 0);
-				end.setHours(23, 59, 59, 999);
-				if (day === 'yesterday') {
-					start.setDate(start.getDate() - 1);
-					end.setDate(end.getDate() - 1);
-				}
-				params.set('start', notquiteiso(start));
-				params.set('end', notquiteiso(end));
-			}
-	
-			if(histwaypoint) {
-				if (histwaypoint == 'all') {
-					fetch_devices(query).then(devices => {
-						params.set('user', query)
-						params.set('device', devices[0])
-	
-						// stupid parameter rewrite
-						params.set('from', params.get('start'))
-						params.set('to', params.get('end'))
-						params.delete('start')
-						params.delete('end')
-	
-						const url = `${API_URL}/locations?${params.toString()}`;
-						return fetch_locations(url).then(loc => {
-							const histogram = get_time_spent_histogram(loc.data.sort((a,b) => a.tst - b.tst));
-							const report = Object.entries(histogram).map(
-								([waypoint, time]) => `- ${waypoint}: **${format_human_seconds(time)}**`
-							).join(`\n`);
-							console.log(histogram);
-	
-							pie(histogram).then(img => {
-								files = [{
-									attachment: img,
-									name: "histogram.png",
-								}]
-								discord_send(`${query} been hanging around:\n${report ?? "John Cena moment"}`, files);
-							});
-						})
-					}).catch(console.error)
-				} else {
-					discord_send('<histwaypoint> should be all, others are not supported yet');	
-				}
-			} else {
-				const url = `${FRONTEND_URL}?${params.toString()}`;
-				discord_send(`${query} be like: ${url}`);
-			}
+		catch (e) {
+			discord_send(e.message);
+			return;
 		}
 	}
 });

@@ -7,6 +7,7 @@
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.7",
     "mqtt": "^5.14.1",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "open-location-code": "^1.0.3"
   }
 }

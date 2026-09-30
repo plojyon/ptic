@@ -158,7 +158,7 @@ const get_regions = (data) => {
 }
 
 async function pie(hist) {
-	const total_time = Object.values(hist).reduce((acc, v) => acc+v);
+	const total_time = Object.values(hist).reduce((acc, v) => acc+v, 0);
 	const configuration = {
 		type: 'pie',
 		data: {

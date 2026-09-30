@@ -3,3 +3,5 @@ package-lock.json
 .env
 waypoints.json
 chart*.png
+.webhook.sh
+

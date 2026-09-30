@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libgif-dev \
     librsvg2-dev \
+	curl \
+	jq \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -17,5 +19,5 @@ COPY package*.json ./
 RUN npm install --production
 COPY . .
 
-CMD ["node", "index.js"]
+CMD ["bash", "startup.sh"]
 

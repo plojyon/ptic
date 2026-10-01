@@ -16,6 +16,13 @@ try {
 catch {
 	w = {};
 }
+let discord_ids;
+try {
+	discord_ids = require('./discord-ids.json');
+}
+catch {
+	discord_ids = {};
+}
 
 const waypoints = w;
 const inregions = {};
@@ -95,6 +102,10 @@ function ago(d) {
 }
 function linkto(lat, lon) {
 	return `<https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}>`;
+}
+function createOpenStreetMapRouteUrl(from, to) {
+	const route = `${from.lat},${from.lon};${to.lat},${to.lon}`;
+	return `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${encodeURIComponent(route)}`;
 }
 function all_waypoints() {
 	return Object.keys(waypoints).reduce((acc, user) => acc.concat(waypoints[user]), [])
@@ -462,6 +473,41 @@ const notify = async (author, target, location_str, range, name, callback) => {
 	return callback(`Ok, I will shit on your head when ${target} enters [the location](${location_url}).`);
 }
 
+const resolve_route_endpoint = async (value) => {
+	const waypoint = get_wp(value);
+	if (waypoint) {
+		return {lat: waypoint.lat, lon: waypoint.lon, label: waypoint.desc};
+	}
+	const user_location = last_seen[value]?.where;
+	if (user_location?.lat != null && user_location?.lon != null) {
+		return {lat: user_location.lat, lon: user_location.lon, label: value};
+	}
+	try {
+		const parsed = await parse_location(value);
+		return {lat: parsed.lat, lon: parsed.lon, label: value};
+	}
+	catch {
+		throw new Error(`Could not resolve route endpoint "${value}".`);
+	}
+}
+
+const route = async (discord_author_id, first, second, callback) => {
+	let from_str = first;
+	let to_str = second;
+	if (to_str == null) {
+		to_str = first;
+		from_str = discord_ids[discord_author_id];
+		if (from_str == null) {
+			throw new Error(`No default origin configured for your Discord ID (${discord_author_id}) in discord-ids.json.`);
+		}
+	}
+
+	const from = await resolve_route_endpoint(from_str);
+	const to = await resolve_route_endpoint(to_str);
+	const route_url = createOpenStreetMapRouteUrl(from, to);
+	callback(`Route from **${from.label}** to **${to.label}**: <${route_url}>`);
+}
+
 discord_client.on('messageCreate', async message => {
 	if (message.author.bot) return;
 
@@ -480,6 +526,16 @@ discord_client.on('messageCreate', async message => {
 			return;
 		}
 
+	} else if (message.content.toLowerCase().startsWith('route ')) {
+		const re = message.content.match(/^route\s+(?<from>\S+)(?:\s+(?<to>\S+))?$/i);
+		if (re == null) return;
+		try {
+			await route(message.author.id, re.groups.from, re.groups.to, discord_send);
+		}
+		catch (e) {
+			discord_send(e.message);
+			return;
+		}
 	} else if (message.content.toLowerCase().startsWith('where ')) {
 		const re = message.content.match(/^where\s+(?<who>\w+)(?:\s(?<when>[\w']+|\[[\w'\-@:]+, ?[\w'\-@:]+\]))?$/i);
 		if (re == null) return;
@@ -650,4 +706,3 @@ mqtt_client.on('message', (topic, message) => {
 		console.error('Error handling MQTT message:', e);
 	}
 });
-

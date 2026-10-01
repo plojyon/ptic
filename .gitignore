@@ -2,6 +2,6 @@ node_modules
 package-lock.json
 .env
 waypoints.json
+discord-ids.json
 chart*.png
 .webhook.sh
-
